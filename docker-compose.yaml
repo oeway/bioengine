@@ -1,0 +1,152 @@
+version: '3.7'
+
+services:
+  triton:
+    image: nvcr.io/nvidia/tritonserver:22.04-py3
+    restart: always
+    shm_size: '5gb'
+    ulimits:
+      memlock: -1
+    # deploy:
+    #   resources:
+    #       reservations:
+    #         devices:
+    #           - driver: nvidia
+    #             device_ids: ["${TRITON_GPU_DEVICE}"]
+    #             capabilities: [gpu]
+    volumes:
+      - "${MODEL_REPOSITORY}:/models"
+      - "${MODEL_SNAPSHOTS_DIRECTORY}:/model-snapshots"
+    ports:
+      - "8000:8000"
+    networks:
+      - hypha-app-engine
+    environment:
+      MODEL_SNAPSHOTS_DIRECTORY: /model-snapshots
+      TF_FORCE_GPU_ALLOW_GROWTH: "true"
+    command: bash -c "tritonserver --model-repository=/models --log-verbose=1 --model-control-mode=poll --exit-on-error=false --strict-model-config=false --repository-poll-secs=10"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 100
+    # labels:
+    #   - "traefik.http.routers.triton.rule=Host(`ai.imjoy.io`)&&PathPrefix(`/triton`)"
+    #   - "traefik.http.routers.triton.entrypoints=websecure"
+    #   - "traefik.http.routers.triton.tls.certresolver=leresolver"
+    #   - "traefik.http.services.triton.loadbalancer.server.port=8000"
+    #   - "traefik.http.routers.triton.middlewares=triton-header,triton-stripprefix"
+    #   - "traefik.http.middlewares.triton-stripprefix.stripprefix.prefixes=/triton"
+    #   - "traefik.http.middlewares.triton-stripprefix.stripprefix.forceslash=false"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolexposeheaders=Inference-Header-Content-Length,Range,Origin,Content-Type"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolallowheaders=Inference-Header-Content-Length,Accept-Encoding,Content-Encoding,Access-Control-Allow-Headers,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,Range"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolallowmethods=GET,HEAD,OPTIONS,PUT,POST"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolalloworiginlist=${ALLOW_ORIGINS}"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolalloworiginlistregex=https://(.*)\\.vscode-webview\\.net"
+    #   - "traefik.http.middlewares.triton-header.headers.accesscontrolmaxage=100"
+    #   - "traefik.http.middlewares.triton-header.headers.addvaryheader=true"
+
+  redis:
+    image: redis:6.2.6
+    networks:
+      - hypha-app-engine
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    volumes: 
+      - "${DATA_ROOT}/hypha-redis:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 30s
+      retries: 30
+
+  hypha:
+    image: ghcr.io/amun-ai/hypha:0.15.8
+    restart: always
+    networks:
+      - hypha-app-engine
+    environment:
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "9520:9520"
+    healthcheck:
+      test: wget --no-verbose --tries=1 http://localhost:9520/health/liveness || exit 1
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    # Add --reset-redis to reset the hypha server
+    command: python -m hypha.server --host=0.0.0.0 --port=9520 --redis-uri=redis://:${REDIS_PASSWORD}@redis:6379/0 --reset-redis --triton-servers=http://triton:8000 --public-base-url=https://ai.imjoy.io --enable-server-apps --in-docker --enable-s3 --endpoint-url=${S3_ENDPOINT_URL} --endpoint-url-public=${S3_ENDPOINT_PUBLIC_URL} --access-key-id=${S3_ACCESS_KEY} --secret-access-key=${S3_SECRET_KEY} --apps-dir=/home/hypha-apps --executable-path=/home/bin
+    volumes:
+      - "${DATA_ROOT}/hypha-apps:/home/hypha-apps"
+    working_dir: /home
+    depends_on:
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.http.routers.hypha.rule=Host(`ai.imjoy.io`)"
+      - "traefik.http.routers.hypha.entrypoints=websecure"
+      - "traefik.http.routers.hypha.tls.certresolver=leresolver"
+      - "traefik.http.services.hypha.loadbalancer.server.port=9520"
+      # - "traefik.http.routers.api.tls.domains[0].main=imjoy.io"
+      # - "traefik.http.routers.api.tls.domains[0].sans=*.imjoy.io"
+      - "traefik.http.routers.hypha.middlewares=hypha-header"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolexposeheaders=Inference-Header-Content-Length,Range,Origin,Content-Type"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowheaders=Inference-Header-Content-Length,Accept-Encoding,Content-Encoding,Authorization,Access-Control-Allow-Headers,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,Range"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowmethods=GET,HEAD,OPTIONS,PUT,POST"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolalloworiginlist=${ALLOW_ORIGINS}"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowcredentials=true"
+      - "traefik.http.middlewares.hypha-header.headers.addvaryheader=true"
+
+  minio:
+    image: minio/minio:RELEASE.2022-09-01T23-53-36Z.fips
+    restart: always
+    volumes:
+      - "${DATA_ROOT}:/data"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - hypha-app-engine
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+      MINIO_BROWSER_REDIRECT_URL: https://s3c.imjoy.io
+    command: server /data --console-address ":9001"
+    expose:
+      - "9000"
+      - "9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    labels:
+      - "traefik.http.routers.minio.service=minio"
+      - "traefik.http.routers.minio.rule=Host(`s3.imjoy.io`)" # &&PathPrefix(`/s3`)"
+      - "traefik.http.routers.minio.entrypoints=websecure"
+      - "traefik.http.routers.minio.tls.certresolver=leresolver"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+      - "traefik.http.routers.minio.middlewares=minio-header" # ,s3-stripprefix"
+      # - "traefik.http.middlewares.s3-stripprefix.stripprefix.prefixes=/s3"
+      # - "traefik.http.middlewares.s3-stripprefix.stripprefix.forceslash=false"
+      - "traefik.http.middlewares.minio-header.headers.accesscontrolallowheaders=Authorization,Access-Control-Allow-Headers,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,Range,x-amz-content-sha256,x-amz-date,x-amz-user-agent"
+      - "traefik.http.middlewares.minio-header.headers.accesscontrolallowmethods=GET,HEAD,OPTIONS,PUT,POST"
+      - "traefik.http.middlewares.minio-header.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.minio-header.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.minio-header.headers.addvaryheader=true"
+      - "traefik.http.routers.minio-console.service=minio-console"
+      - "traefik.http.routers.minio-console.rule=Host(`s3c.imjoy.io`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=leresolver"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+
+networks:
+  hypha-app-engine:
+    external: false

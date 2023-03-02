@@ -2,7 +2,7 @@ version: '3.7'
 
 services:
   triton:
-    image: nvcr.io/nvidia/tritonserver:22.04-py3
+    image: nvcr.io/nvidia/tritonserver:22.05-py3
     restart: always
     shm_size: '5gb'
     ulimits:

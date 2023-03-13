@@ -1,5 +1,5 @@
-import subprocess
-subprocess.call(['pip', 'install', 'pyotritonclient', 'kaibu-utils'])
+# import subprocess
+# subprocess.call(['pip', 'install', 'pyotritonclient', 'kaibu-utils'])
 
 import io
 from PIL import Image
@@ -11,8 +11,8 @@ image = np.random.randint(0, 255, size=(1, 1, 256, 256), dtype=np.uint8).astype(
 )
 kwargs = {
     "inputs": [image],
-    "model_id": "affable-shark",
-    "return_rdf": True,
+    "model_id": "/models/affable-shark/rdf.yaml",
+    "return_rdf": False,
 }
 
 async def run():

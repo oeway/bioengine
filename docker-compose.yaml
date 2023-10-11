@@ -2,9 +2,8 @@ version: '3.7'
 
 services:
   triton:
-    image: nvcr.io/nvidia/tritonserver:22.05-py3
-    restart: always
-    shm_size: '5gb'
+    image: nvcr.io/nvidia/tritonserver:23.03-py3
+    shm_size: '6gb'
     ulimits:
       memlock: -1
     # deploy:
@@ -24,7 +23,7 @@ services:
     environment:
       MODEL_SNAPSHOTS_DIRECTORY: /model-snapshots
       TF_FORCE_GPU_ALLOW_GROWTH: "true"
-    command: bash -c "tritonserver --model-repository=/models --log-verbose=1 --model-control-mode=poll --exit-on-error=false --strict-model-config=false --repository-poll-secs=10"
+    command: bash -c "tritonserver --model-repository=/models --log-verbose=3 --log-info=1 --log-warning=1 --log-error=1 --model-control-mode=poll --exit-on-error=false --repository-poll-secs=10"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/live"]
       interval: 30s
@@ -96,8 +95,8 @@ services:
       # - "traefik.http.routers.api.tls.domains[0].main=imjoy.io"
       # - "traefik.http.routers.api.tls.domains[0].sans=*.imjoy.io"
       - "traefik.http.routers.hypha.middlewares=hypha-header"
-      - "traefik.http.middlewares.hypha-header.headers.accesscontrolexposeheaders=Inference-Header-Content-Length,Range,Origin,Content-Type"
-      - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowheaders=Inference-Header-Content-Length,Accept-Encoding,Content-Encoding,Authorization,Access-Control-Allow-Headers,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,Range"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolexposeheaders=Inference-Header-Content-Length,Range,Origin,Content-Type,Date"
+      - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowheaders=Inference-Header-Content-Length,Accept-Encoding,Content-Encoding,Authorization,Access-Control-Allow-Headers,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,Range,Date"
       - "traefik.http.middlewares.hypha-header.headers.accesscontrolallowmethods=GET,HEAD,OPTIONS,PUT,POST"
       - "traefik.http.middlewares.hypha-header.headers.accesscontrolalloworiginlist=${ALLOW_ORIGINS}"
       - "traefik.http.middlewares.hypha-header.headers.accesscontrolmaxage=100"
@@ -117,7 +116,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
-      MINIO_BROWSER_REDIRECT_URL: https://s3c.imjoy.io
+      # MINIO_BROWSER_REDIRECT_URL: https://s3c.imjoy.io
     command: server /data --console-address ":9001"
     expose:
       - "9000"
